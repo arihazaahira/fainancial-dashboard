@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+requests
+pandas
+numpy
+pmdarima
+prophet
+influxdb-client
+python-dotenv
