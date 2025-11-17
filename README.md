@@ -26,7 +26,9 @@ pip install -r requirements.txt
 
 # Lancer le serveur
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
-**###2.Frontend(react vite)**
+
+### 2.Frontend(react vite)
+
 # Aller dans le dossier frontend
 cd frontend
 
