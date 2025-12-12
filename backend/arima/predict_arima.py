@@ -1,4 +1,3 @@
-# backend/arima/predict_arima.py
 import pandas as pd
 import sys
 import os
@@ -13,8 +12,8 @@ def predict_close(symbol):
     2. Si oui → retourner
     3. Si non → garantir 30 jours de données
     4. Entraîner ARIMA
-    5. Prédire close d'aujourd'hui
-    6. Stocker prédiction
+    5. Prédire close d'aujourd'hui + 5 prochains jours
+    6. Stocker prédictions
     """
     try:
         # Imports
@@ -46,6 +45,18 @@ def predict_close(symbol):
             df = get_close_from_influx(symbol)
             yesterday_close = float(df['close'].iloc[-1]) if not df.empty else 0
             
+            # Récupérer les 5 prochains jours du cache
+            next_5_days = []
+            for i in range(1, 6):
+                future_date = today + timedelta(days=i)
+                future_pred = get_prediction_for_today(symbol, date=future_date)
+                if future_pred is not None:
+                    next_5_days.append({
+                        "date": future_date.isoformat(),
+                        "predicted_close": float(future_pred),
+                        "day_number": i
+                    })
+            
             return {
                 "symbol": symbol,
                 "predicted_close": float(existing_pred),
@@ -56,6 +67,7 @@ def predict_close(symbol):
                 "source": "cached",
                 "confidence": 95,
                 "cache_hit": True,
+                "next_5_days": next_5_days,
                 "message": f"Prédiction récente (<24h) pour {today.date()}"
             }
         
@@ -89,18 +101,46 @@ def predict_close(symbol):
             print(f"   ⚠️ ARIMA(2,1,2) échoué, essai (1,1,1)...")
             model = train_arima(df, order=(1,1,1), plot_results=False)
         
-        # ===== 4. PRÉDIRE =====
-        print(f"\n4️⃣ Prédiction du close pour {today.date()}...")
-        prediction = model.forecast(steps=1)[0]
-        yesterday_close = float(df['close'].iloc[-1])
-        change_percent = ((prediction - yesterday_close) / yesterday_close) * 100
+        # ===== 4. PRÉDIRE AUJOURD'HUI + 5 JOURS =====
+        print(f"\n4️⃣ Prédiction du close pour aujourd'hui + 5 prochains jours...")
         
-        print(f"   🔮 Prédiction: ${prediction:.2f}")
+        # Prédire 6 jours (aujourd'hui + 5 suivants)
+        forecasts = model.forecast(steps=6)
+        
+        prediction_today = forecasts[0]
+        yesterday_close = float(df['close'].iloc[-1])
+        change_percent = ((prediction_today - yesterday_close) / yesterday_close) * 100
+        
+        print(f"   🔮 Prédiction aujourd'hui: ${prediction_today:.2f}")
         print(f"   📈 Variation: {change_percent:+.2f}%")
         
-        # ===== 5. STOCKER PRÉDICTION =====
-        print(f"\n5️⃣ Stockage prédiction...")
-        write_prediction_to_influx(symbol, today, prediction)
+        # ===== 5. STOCKER PRÉDICTIONS =====
+        print(f"\n5️⃣ Stockage prédictions...")
+        
+        # Stocker aujourd'hui
+        write_prediction_to_influx(symbol, today, prediction_today)
+        
+        # Stocker les 5 prochains jours
+        next_5_days = []
+        for i in range(1, 6):
+            future_date = today + timedelta(days=i)
+            future_prediction = forecasts[i]
+            
+            # Stocker dans InfluxDB
+            write_prediction_to_influx(symbol, future_date, future_prediction)
+            
+            # Préparer pour le résultat
+            prev_close = forecasts[i-1]
+            future_change = ((future_prediction - prev_close) / prev_close) * 100
+            
+            next_5_days.append({
+                "date": future_date.isoformat(),
+                "predicted_close": float(future_prediction),
+                "day_number": i,
+                "change_from_previous": round(future_change, 2)
+            })
+            
+            print(f"   📅 J+{i} ({future_date.date()}): ${future_prediction:.2f} ({future_change:+.2f}%)")
         
         # Calcul confiance
         confidence = min(95, 70 + min(len(df) / 2, 25))
@@ -108,7 +148,7 @@ def predict_close(symbol):
         # ===== RÉSULTAT =====
         result = {
             "symbol": symbol,
-            "predicted_close": float(prediction),
+            "predicted_close": float(prediction_today),
             "prediction_date": today.isoformat(),
             "yesterday_close": float(yesterday_close),
             "change_percent": round(change_percent, 2),
@@ -117,11 +157,13 @@ def predict_close(symbol):
             "confidence": int(confidence),
             "data_points": len(df),
             "cache_hit": False,
-            "message": f"Close prédit pour {today.date()} basé sur {len(df)} jours"
+            "next_5_days": next_5_days,
+            "message": f"Close prédit pour {today.date()} + 5 jours suivants basé sur {len(df)} jours"
         }
         
         print(f"\n✅ PRÉDICTION COMPLÈTE")
-        print(f"   Résultat: ${prediction:.2f} (Confiance: {confidence}%)")
+        print(f"   Aujourd'hui: ${prediction_today:.2f} (Confiance: {confidence}%)")
+        print(f"   5 jours suivants stockés")
         
         return result
         

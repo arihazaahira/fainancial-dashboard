@@ -103,6 +103,7 @@ function MarketList() {
         }
         
         console.log(`✅ Close prédit: $${res.data.predicted_close}`);
+        console.log(`📅 Prochains 5 jours:`, res.data.next_5_days);
         setPrediction(res.data);
         setLoading(false);
       })
@@ -164,6 +165,22 @@ function MarketList() {
       });
     } catch {
       return "Date invalide";
+    }
+  };
+
+  const formatShortDate = (dateStr) => {
+    if (!dateStr) return "N/A";
+    try {
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return "Invalid";
+      
+      return date.toLocaleDateString('fr-FR', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric'
+      });
+    } catch {
+      return "Invalid";
     }
   };
 
@@ -421,6 +438,226 @@ function MarketList() {
           </div>
         )}
 
+        {/* PRÉDICTIONS 5 PROCHAINS JOURS */}
+        {prediction && !prediction.error && prediction.next_5_days && prediction.next_5_days.length > 0 && (
+          <div className="future-predictions">
+            <div className="section-header">
+              <h3>
+                <span className="section-icon">📅</span>
+                Next 5 Days Forecast
+              </h3>
+              <div className="data-subtitle">
+                Extended predictions based on ARIMA model
+              </div>
+            </div>
+
+            {/* CHART VISUEL */}
+            <div className="forecast-chart">
+              <div className="chart-container">
+                <svg className="price-chart" viewBox="0 0 800 300" preserveAspectRatio="xMidYMid meet">
+                  {(() => {
+                    // Préparer les données avec aujourd'hui
+                    const allPoints = [
+                      { 
+                        date: prediction.prediction_date, 
+                        price: prediction.predicted_close,
+                        label: "Today",
+                        isToday: true
+                      },
+                      ...prediction.next_5_days.map(day => ({
+                        date: day.date,
+                        price: day.predicted_close,
+                        label: formatShortDate(day.date),
+                        isToday: false
+                      }))
+                    ];
+                    
+                    // Calculer min/max pour l'échelle
+                    const prices = allPoints.map(p => p.price);
+                    const minPrice = Math.min(...prices);
+                    const maxPrice = Math.max(...prices);
+                    const priceRange = maxPrice - minPrice;
+                    const padding = priceRange * 0.2;
+                    
+                    // Dimensions du graphique
+                    const chartWidth = 800;
+                    const chartHeight = 300;
+                    const margin = { top: 40, right: 60, bottom: 60, left: 60 };
+                    const width = chartWidth - margin.left - margin.right;
+                    const height = chartHeight - margin.top - margin.bottom;
+                    
+                    // Fonction de scaling
+                    const scaleX = (index) => margin.left + (index / (allPoints.length - 1)) * width;
+                    const scaleY = (price) => margin.top + height - ((price - minPrice + padding) / (priceRange + 2 * padding)) * height;
+                    
+                    // Créer le path de la ligne
+                    const pathData = allPoints.map((point, i) => {
+                      const x = scaleX(i);
+                      const y = scaleY(point.price);
+                      return i === 0 ? `M ${x} ${y}` : `L ${x} ${y}`;
+                    }).join(' ');
+                    
+                    // Créer le gradient area path
+                    const areaPathData = pathData + 
+                      ` L ${scaleX(allPoints.length - 1)} ${margin.top + height}` +
+                      ` L ${margin.left} ${margin.top + height} Z`;
+                    
+                    return (
+                      <>
+                        {/* Définitions des gradients */}
+                        <defs>
+                          <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" style={{ stopColor: '#6366f1', stopOpacity: 1 }} />
+                            <stop offset="100%" style={{ stopColor: '#8b5cf6', stopOpacity: 1 }} />
+                          </linearGradient>
+                          <linearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" style={{ stopColor: '#6366f1', stopOpacity: 0.3 }} />
+                            <stop offset="100%" style={{ stopColor: '#8b5cf6', stopOpacity: 0.05 }} />
+                          </linearGradient>
+                        </defs>
+                        
+                        {/* Grille horizontale */}
+                        {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => {
+                          const y = margin.top + height * ratio;
+                          const price = maxPrice + padding - (priceRange + 2 * padding) * ratio;
+                          return (
+                            <g key={i}>
+                              <line
+                                x1={margin.left}
+                                y1={y}
+                                x2={margin.left + width}
+                                y2={y}
+                                stroke="rgba(255,255,255,0.1)"
+                                strokeWidth="1"
+                                strokeDasharray="4 4"
+                              />
+                              <text
+                                x={margin.left - 10}
+                                y={y + 4}
+                                textAnchor="end"
+                                fontSize="11"
+                                fill="rgba(255,255,255,0.5)"
+                              >
+                                ${price.toFixed(2)}
+                              </text>
+                            </g>
+                          );
+                        })}
+                        
+                        {/* Area sous la ligne */}
+                        <path
+                          d={areaPathData}
+                          fill="url(#areaGradient)"
+                        />
+                        
+                        {/* Ligne principale */}
+                        <path
+                          d={pathData}
+                          fill="none"
+                          stroke="url(#lineGradient)"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        
+                        {/* Points et labels */}
+                        {allPoints.map((point, i) => {
+                          const x = scaleX(i);
+                          const y = scaleY(point.price);
+                          const isHighest = point.price === maxPrice;
+                          const isLowest = point.price === minPrice;
+                          
+                          return (
+                            <g key={i}>
+                              {/* Point */}
+                              <circle
+                                cx={x}
+                                cy={y}
+                                r={point.isToday ? 6 : 5}
+                                fill={point.isToday ? '#fff' : '#6366f1'}
+                                stroke={point.isToday ? '#6366f1' : '#fff'}
+                                strokeWidth={point.isToday ? 3 : 2}
+                                style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }}
+                              />
+                              
+                              {/* Label date */}
+                              <text
+                                x={x}
+                                y={margin.top + height + 20}
+                                textAnchor="middle"
+                                fontSize="11"
+                                fontWeight={point.isToday ? 700 : 500}
+                                fill={point.isToday ? '#6366f1' : 'rgba(255,255,255,0.6)'}
+                              >
+                                {point.label}
+                              </text>
+                              
+                              {/* Prix au-dessus des points extrêmes ou aujourd'hui */}
+                              {(isHighest || isLowest || point.isToday) && (
+                                <g>
+                                  <rect
+                                    x={x - 35}
+                                    y={y - 30}
+                                    width="70"
+                                    height="20"
+                                    rx="10"
+                                    fill={point.isToday ? '#6366f1' : isHighest ? '#10b981' : '#ef4444'}
+                                    opacity="0.9"
+                                  />
+                                  <text
+                                    x={x}
+                                    y={y - 16}
+                                    textAnchor="middle"
+                                    fontSize="12"
+                                    fontWeight="700"
+                                    fill="#fff"
+                                  >
+                                    ${point.price.toFixed(2)}
+                                  </text>
+                                </g>
+                              )}
+                            </g>
+                          );
+                        })}
+                      </>
+                    );
+                  })()}
+                </svg>
+              </div>
+            </div>
+
+            <div className="future-cards-container">
+              {prediction.next_5_days.map((day, index) => {
+                const changeDirection = day.change_from_previous >= 0 ? 'positive' : 'negative';
+                
+                return (
+                  <div key={index} className="future-card">
+                    <div className="future-day-header">
+                      <div className="day-number">Day +{day.day_number}</div>
+                      <div className="future-date">{formatShortDate(day.date)}</div>
+                    </div>
+                    
+                    <div className="future-price">
+                      {formatPrice(day.predicted_close)}
+                    </div>
+                    
+                    <div className={`future-change ${changeDirection}`}>
+                      {changeDirection === 'positive' ? '↗ +' : '↘ '}
+                      {Math.abs(day.change_from_previous || 0).toFixed(2)}%
+                    </div>
+                    
+                    <div className="future-label">vs previous day</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="future-note">
+              📊 These predictions are based on historical patterns and should be used as guidance only.
+              Confidence decreases with distance from current date.
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
